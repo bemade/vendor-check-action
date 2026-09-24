@@ -92,7 +92,14 @@ runs:
         if [ -n "$GITLAB_TOKEN" ]; then
           git config --global url."https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}/".insteadOf "git@${GITLAB_HOST}:"
         fi
-        python -m pip install --quiet "git+https://github.com/bemade/odoo-dev@${ODOO_DEV_REF}"
+        # Clone odoo-dev without submodules and install from the local path. A
+        # `pip install git+…odoo-dev` recurses submodules, and odoo-dev's test
+        # fixture submodule is a private repository a consumer's runner cannot
+        # reach. The wheel only packages src/odoo_dev, so nothing is lost.
+        odoo_dev_src="${RUNNER_TEMP:-/tmp}/odoo-dev"
+        rm -rf "$odoo_dev_src"
+        git clone --quiet --depth 1 --branch "$ODOO_DEV_REF" https://github.com/bemade/odoo-dev.git "$odoo_dev_src"
+        python -m pip install --quiet "$odoo_dev_src"
         args=()
         [ "$NO_HYBRID" = "true" ] && args+=(--no-hybrid)
         odoo-dev vendor check "${args[@]}"
