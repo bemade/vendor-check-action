@@ -1,0 +1,98 @@
+name: "Vendor Check"
+description: >-
+  Gate a project that vendors Odoo addons (vendored/ + addons.lock). offline:
+  fail a pull request that edits vendored/<addon>/ without re-pinning it.
+  full: run `odoo-dev vendor check`, proving every vendored addon matches its
+  pinned commit.
+author: "Bemade Inc."
+branding:
+  icon: lock
+  color: blue
+
+inputs:
+  mode:
+    description: "'offline' (git only, pull requests) or 'full' (odoo-dev vendor check; needs read access to every source in addons.lock)."
+    required: false
+    default: "offline"
+  base-sha:
+    description: "offline: the pull request's base commit."
+    required: false
+    default: ${{ github.event.pull_request.base.sha }}
+  head-sha:
+    description: "offline: the pull request's head commit."
+    required: false
+    default: ${{ github.event.pull_request.head.sha }}
+  lock-file:
+    description: "Path of the lock file."
+    required: false
+    default: "addons.lock"
+  vendored-dir:
+    description: "Directory holding the vendored addons."
+    required: false
+    default: "vendored"
+  odoo-dev-ref:
+    description: "full: git ref of github.com/bemade/odoo-dev to install."
+    required: false
+    default: "master"
+  no-hybrid:
+    description: "full: also fail if addons/ still symlinks into .repos/ ('true' for fully vendored repos)."
+    required: false
+    default: "true"
+  gitlab-host:
+    description: "full: host of private sources reached with gitlab-token."
+    required: false
+    default: "git.bemade.org"
+  gitlab-token:
+    description: "full: read_repository token for private sources on gitlab-host. Leave empty when every source is public."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Validate mode
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        case "$MODE" in
+          offline|full) ;;
+          *) echo "::error::vendor-check: mode must be 'offline' or 'full', got '$MODE'"; exit 1 ;;
+        esac
+
+    - name: Vendored edits come with a lock change (offline)
+      if: inputs.mode == 'offline'
+      shell: bash
+      env:
+        BASE_SHA: ${{ inputs.base-sha }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        LOCK_FILE: ${{ inputs.lock-file }}
+        VENDORED_DIR: ${{ inputs.vendored-dir }}
+      run: python3 "${{ github.action_path }}/vendor_check_offline.py"
+
+    - name: Set up Python for odoo-dev (full)
+      if: inputs.mode == 'full'
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Vendored tree matches addons.lock (full)
+      if: inputs.mode == 'full'
+      shell: bash
+      env:
+        ODOO_DEV_REF: ${{ inputs.odoo-dev-ref }}
+        NO_HYBRID: ${{ inputs.no-hybrid }}
+        GITLAB_HOST: ${{ inputs.gitlab-host }}
+        GITLAB_TOKEN: ${{ inputs.gitlab-token }}
+      run: |
+        set -euo pipefail
+        # addons.lock names sources by SSH URL; the runner has no key. Public
+        # GitHub sources are read over HTTPS, private GitLab ones with the token.
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
+        if [ -n "$GITLAB_TOKEN" ]; then
+          git config --global url."https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}/".insteadOf "git@${GITLAB_HOST}:"
+        fi
+        python -m pip install --quiet "git+https://github.com/bemade/odoo-dev@${ODOO_DEV_REF}"
+        args=()
+        [ "$NO_HYBRID" = "true" ] && args+=(--no-hybrid)
+        odoo-dev vendor check "${args[@]}"
