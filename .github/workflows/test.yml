@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: pytest -q
+
+  # The action run against this repository, which vendors nothing: offline
+  # must pass (no vendored/ changes) and a bad mode must be rejected.
+  self-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./
+      - id: bad
+        uses: ./
+        continue-on-error: true
+        with:
+          mode: bogus
+      - if: steps.bad.outcome != 'failure'
+        run: echo "::error::mode 'bogus' was not rejected" && exit 1
